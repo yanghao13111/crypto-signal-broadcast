@@ -13,4 +13,5 @@ dependencies = [
     "aiohttp>=3.8.0",
     "ccxt>=4.4.95",
     "polars>=0.20.0",
+    "tqdm>=4.67.1",
 ]

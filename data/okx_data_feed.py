@@ -3,15 +3,18 @@ import pandas as pd
 import time
 from datetime import datetime, timedelta
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 
 class OKXDailyFetcher:
-    def __init__(self, market_type="spot", quote_currency="USDT", limit=30, sleep_sec=0):
+    def __init__(self, market_type="spot", quote_currency="USDT", limit=30, sleep_sec=0, max_workers=2):
         assert market_type in ("spot", "swap"), "market_type must be 'spot' or 'swap'"
         self.exchange = ccxt.okx()
         self.market_type = market_type
         self.quote_currency = quote_currency
         self.limit = limit
         self.sleep_sec = sleep_sec
+        self.max_workers = max_workers
         self.symbols = self._load_symbols()
         self.filename = f"okx_{self.market_type}_1d.csv"
         self.existing_df = self._load_existing()
@@ -63,26 +66,33 @@ class OKXDailyFetcher:
                 lambda ts: datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d")
             )
             df["symbol"] = symbol
+            df["volume"] = df["volume"] * df["close"]
             df["k_type"] = df.apply(lambda row: 1 if row["close"] > row["open"] else -1, axis=1)
-            return df[["timestamp", "symbol", "open", "high", "low", "close", "k_type"]]
+            return df[["timestamp", "symbol", "open", "high", "low", "close", "volume", "k_type"]]
         except Exception as e:
             print(f"❌ 抓取 {symbol} 失敗: {e}")
             return pd.DataFrame()
 
     def fetch_all(self):
         new_data = []
-        for idx, symbol in enumerate(self.symbols):
-            print(f"[{idx+1}/{len(self.symbols)}] 處理 {symbol} ...")
-            last_ts = self._get_last_timestamp(symbol)
-            if last_ts:
-                print(f"  🔄 有歷史資料，從 {last_ts.date()} 開始更新")
-            else:
-                print(f"  🆕 新幣種，抓最近 {self.limit} 天")
 
-            df = self._fetch_ohlcv(symbol, since_ts=last_ts)
-            if not df.empty:
-                new_data.append(df)
-            time.sleep(self.sleep_sec)
+        def fetch_one(symbol):
+            last_ts = self._get_last_timestamp(symbol)
+            return self._fetch_ohlcv(symbol, since_ts=last_ts)
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {executor.submit(fetch_one, symbol): symbol for symbol in self.symbols}
+            for future in tqdm(as_completed(futures), total=len(futures), desc=f"📦 抓取 {self.market_type.upper()}"):
+                symbol = futures[future]
+                try:
+                    df = future.result()
+                    if not df.empty:
+                        new_data.append(df)
+                except Exception as e:
+                    print(f"❌ {symbol} 發生錯誤：{e}")
+                if self.sleep_sec > 0:
+                    time.sleep(self.sleep_sec)
+
         return new_data
 
     def save_updated_csv(self):

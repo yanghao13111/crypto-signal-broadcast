@@ -1,3 +1,4 @@
+import time
 from data.okx_data_feed import OKXDailyFetcher
 from strategies.double_bullish import DoubleBullishStrategy
 
@@ -29,4 +30,7 @@ class Pipeline:
         self.run_strategies()
 
 if __name__ == "__main__":
+    start_time = time.time()
     Pipeline().run()
+    end_time = time.time()
+    print(f"程式執行時間：{end_time - start_time:.2f} 秒")
